@@ -1,0 +1,9 @@
+This is a module focusing on tracing energy-sensitive system calls.
+ Generally speaking, a naive project for undergraduate thesis. Till 
+now, no documentations for the project. Also, it is mainly for personal
+use, so the scripts in the tree may not work in your case, if you 
+really want to work on a fork of this project.
+
+Thanks.
+
+Pei Wang <wangpei.cs@pku.edu.cn>
