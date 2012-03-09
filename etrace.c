@@ -3,6 +3,7 @@
 #include <linux/kernel.h>
 #include <linux/elogk.h>
 #include <linux/string.h>
+#include <linux/time.h>
 
 /*
  * Our key idea: list every important syscall and instrument their
@@ -26,6 +27,9 @@
  * an interesting question. Figure it out.
  */
 
+static unsigned int counter[10];
+static struct timespec timestat;
+
 #define regs_arg(regs,no,type)     ((type)((regs)->ARM_r ## no))
 
 #define STR_BUF_SIZE          256
@@ -48,7 +52,7 @@ struct fs_kretprobe_data
 #define EEVENT_READ_NO       2
 #define EEVENT_WRITE_NO      3
 
-static inline int file_filter(char * path, size_t length)
+static inline int __file_filter(char * path, size_t length)
 {
     if (length < 5)
         return 0;
@@ -56,48 +60,14 @@ static inline int file_filter(char * path, size_t length)
     if (strncmp(path, "/proc", 5) == 0)
         return 1;
     
+    if (strncmp(path, "pipe:", 5) == 0)
+        return 1;
+    
     return 0;
 }
 
-/*
- * hooked func:
- * void fd_install(unsgined int fd, struct file *file)
- */
-static void open_handler(unsigned int fd, struct file *file)
-{
-    static __s16 id = 0;
-    static char buf[EBUF_SIZE];
-    char *fpath;
-    int fpath_len;
-    
-    struct eevent_t *eevent = (struct eevent_t *)buf;
-    
-    fpath = d_path(&file->f_path, __buf, STR_BUF_SIZE);
-    if (IS_ERR(fpath))
-        fpath = ERR_FILENAME;
-    fpath_len = strlen(fpath);
-
-    if (file_filter(fpath, fpath_len))
-        jprobe_return();
-
-    eevent->syscall_no = EEVENT_OPEN_NO;
-    eevent->id = id++;
-    eevent->len =
-        sprintf(eevent->params, "%u,\"%.*s\"", fd, fpath_len, fpath);
-
-    elogk(eevent);
-
-    jprobe_return();
-}
-
-static struct jprobe open_jprobe =
-{
-    .entry = open_handler,
-    .kp =
-    {
-        .symbol_name = "fd_install",
-    },
-};
+#define file_filter(x,y) __file_filter(x,y)
+//#define file_filter(x,y) 0
 
 /*
  * hooked func:
@@ -110,9 +80,6 @@ static int read_entry_handler(struct kretprobe_instance *ri, struct pt_regs *reg
     struct eevent_t *eevent = (struct eevent_t *)buf;
 
     struct file *arg0 = regs_arg(regs, 0, struct file *);
-    char *arg1        = regs_arg(regs, 1, char *);
-    size_t arg2       = regs_arg(regs, 2, size_t);
-    loff_t *arg3      = regs_arg(regs, 3, loff_t *);
     
     char *fpath;
     int fpath_len;
@@ -134,10 +101,12 @@ static int read_entry_handler(struct kretprobe_instance *ri, struct pt_regs *reg
     data->id = id;
     eevent->syscall_no = EEVENT_READ_NO;
     eevent->id = id++;
-    eevent->len = sprintf(eevent->params, "\"%.*s\",%p,%u,%p",
-                          fpath_len, fpath, arg1, arg2, arg3);
+    eevent->len =
+        sprintf(eevent->params, "\"%.*s\"", fpath_len, fpath);
     
     elogk(eevent);
+    
+    ++counter[EEVENT_READ_NO];
     
     return 0;
 }
@@ -170,7 +139,7 @@ static struct kretprobe read_kretprobe =
     .data_size = sizeof(struct fs_kretprobe_data),
     .kp =
     {
-        .symbol_name = "vfs_read",
+        .symbol_name = "__ee_read_core",
     },
     .maxactive = 10,
 };
@@ -186,9 +155,6 @@ static int write_entry_handler(struct kretprobe_instance *ri, struct pt_regs *re
     struct eevent_t *eevent = (struct eevent_t *)buf;
 
     struct file *arg0 = regs_arg(regs, 0, struct file *);
-    char *arg1        = regs_arg(regs, 1, char *);
-    size_t arg2       = regs_arg(regs, 2, size_t);
-    loff_t *arg3      = regs_arg(regs, 3, loff_t *);
 
     char *fpath;
     int fpath_len;
@@ -211,10 +177,11 @@ static int write_entry_handler(struct kretprobe_instance *ri, struct pt_regs *re
     eevent->syscall_no = EEVENT_WRITE_NO;
     eevent->id = id++;    
     eevent->len =
-        sprintf(eevent->params, "\"%.*s\",%p,%u,%p",
-                fpath_len, fpath, arg1, arg2, arg3);
+        sprintf(eevent->params, "\"%.*s\"", fpath_len, fpath);
     
     elogk(eevent);
+    
+    ++counter[EEVENT_WRITE_NO];
     
     return 0;
 }
@@ -255,10 +222,6 @@ static int __init etrace_init(void)
 {
     int ret;
 
-    ret = register_jprobe(&open_jprobe);
-    if (ret < 0)
-        goto err;
-
     ret = register_kretprobe(&read_kretprobe);
     if (ret < 0)
         goto err;
@@ -266,6 +229,8 @@ static int __init etrace_init(void)
     ret = register_kretprobe(&write_kretprobe);
     if (ret < 0)
         goto err;
+
+    ktime_get_ts(&timestat);
     
     return 0;
     
@@ -276,9 +241,17 @@ static int __init etrace_init(void)
 
 static void __exit etrace_exit(void)
 {
-    unregister_jprobe(&open_jprobe);
+    long s = timestat.tv_sec;
+    
     unregister_kretprobe(&read_kretprobe);
     unregister_kretprobe(&write_kretprobe);
+
+    ktime_get_ts(&timestat);
+    
+    printk(KERN_INFO "%d read, %d write in %ld seconds!\n",
+           counter[EEVENT_READ_NO],
+           counter[EEVENT_WRITE_NO],
+           timestat.tv_sec - s);
     return;
 }
 
