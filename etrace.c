@@ -23,7 +23,7 @@ static struct timespec timestat;
 #define regs_arg(regs,no,type)     ((type)((regs)->ARM_r ## no))
 
 #define LBUF_SIZE          128
-#define SBUF_SIZE          16
+#define SBUF_SIZE          4 
 
 enum {
     EEVENT_VFS_READ = 0,
