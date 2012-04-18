@@ -22,8 +22,8 @@ static struct timespec timestat;
 
 #define regs_arg(regs,no,type)     ((type)((regs)->ARM_r ## no))
 
-#define LBUF_SIZE          48
-#define SBUF_SIZE          32
+#define LBUF_SIZE          128
+#define SBUF_SIZE          16
 
 enum {
     EEVENT_VFS_READ = 0,
@@ -41,9 +41,16 @@ struct elog_probe_data
     __u8 payload[SBUF_SIZE];
 } __attribute__((packed));
 
+/*
 static inline int fpath_filter(char *path, size_t length)
 {
-    struct {
+    return 0;
+}
+*/
+
+static inline int fpath_filter(char *path, size_t length)
+{
+    static const struct {
         size_t length;
         char *path;
     } paths[2] = {
@@ -60,6 +67,7 @@ static inline int fpath_filter(char *path, size_t length)
     
     return 1;
 }
+
 
 static int read_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -103,6 +111,8 @@ static int read_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
     ktime_get_ts((struct timespec *)(eevent->payload + sizeof(ssize_t)));
     eevent->len = sizeof(ssize_t) + sizeof(struct timespec);
     
+    counter[EEVENT_VFS_READ]++;
+
     elogk(eevent, ELOG_VFS, ELOGK_WITHOUT_TIME);
     
     return 0;
@@ -159,6 +169,8 @@ static int write_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs
     memcpy(eevent->payload, &retvalue, sizeof(ssize_t));
     ktime_get_ts((struct timespec *)(eevent->payload + sizeof(ssize_t)));
     eevent->len = sizeof(ssize_t) + sizeof(struct timespec);
+
+    counter[EEVENT_VFS_WRITE]++;
     
     elogk(eevent, ELOG_VFS, ELOGK_WITHOUT_TIME);
     
@@ -274,7 +286,7 @@ static void __exit etrace_exit(void)
 //    unregister_kretprobe(&recv_kretprobe);
     
     ktime_get_ts(&timestat);
-    
+     
     printk(KERN_INFO "%d read, %d write, %d send, %d recv in %ld seconds!\n",
            counter[EEVENT_VFS_READ],
            counter[EEVENT_VFS_WRITE],
@@ -282,6 +294,7 @@ static void __exit etrace_exit(void)
            counter[EEVENT_NET_RECV],
            
            timestat.tv_sec - s);
+    
     return;
 }
 
