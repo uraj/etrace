@@ -108,8 +108,7 @@ static int read_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
         return 0;
     
     memcpy(eevent->payload, &retvalue, sizeof(ssize_t));
-    ktime_get_ts((struct timespec *)(eevent->payload + sizeof(ssize_t)));
-    eevent->len = sizeof(ssize_t) + sizeof(struct timespec);
+    eevent->len = sizeof(ssize_t);
     
     counter[EEVENT_VFS_READ]++;
 
@@ -167,8 +166,7 @@ static int write_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs
         return 0;
     
     memcpy(eevent->payload, &retvalue, sizeof(ssize_t));
-    ktime_get_ts((struct timespec *)(eevent->payload + sizeof(ssize_t)));
-    eevent->len = sizeof(ssize_t) + sizeof(struct timespec);
+    eevent->len = sizeof(ssize_t);
 
     counter[EEVENT_VFS_WRITE]++;
     
