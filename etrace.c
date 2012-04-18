@@ -104,7 +104,7 @@ static int read_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
     
     retvalue = (ssize_t)regs_return_value(regs);
     
-    if (retvalue <= 0)
+    if (retvalue < 512)
         return 0;
     
     memcpy(eevent->payload, &retvalue, sizeof(ssize_t));
@@ -163,7 +163,7 @@ static int write_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs
     
     retvalue = (ssize_t)regs_return_value(regs);
 
-    if (retvalue <= 0)
+    if (retvalue < 512)
         return 0;
     
     memcpy(eevent->payload, &retvalue, sizeof(ssize_t));
