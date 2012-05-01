@@ -6,7 +6,9 @@
 #include <linux/time.h>
 #include <linux/fs.h>
 #include <linux/sched.h>
-#include <linux/net.h>
+#include <linux/mmc/host.h>
+#include <linux/mmc/core.h>
+#include <linux/mmc/card.h>
 
 /*
  * Our key idea: list every important syscall/drivers and instrument
@@ -28,8 +30,8 @@ static struct timespec timestat;
 enum {
     EEVENT_VFS_READ = 0,
     EEVENT_VFS_WRITE,
-    EEVENT_NET_SEND,
-    EEVENT_NET_RECV,
+    EEVENT_MMC_READ,
+    EEVENT_MMC_WRITE,
 };
 
 #define ERR_FILENAME "(.)"
@@ -54,8 +56,8 @@ static inline int fpath_filter(char *path, size_t length)
         size_t length;
         char *path;
     } paths[2] = {
-        { .length = 5, .path = "/data", },
         { .length = 11, .path = "/mnt/sdcard" },
+        { .length = 7, .path = "/sdcard", },
     };
 
     int i;
@@ -185,91 +187,78 @@ static struct kretprobe write_kretprobe = {
     .maxactive = 10,
 };
 
-/*
-// sys_sendto(int fd, void *buf, size_t len, unsigned flags, struct sockaddr *addr, int addr_len)
-
-int send_entry_handler(int fd, void *ubuf, size_t len, unsigned flags, struct sockaddr *addr, int addr_len)
+/**
+ * func: @mmc_wait_for_req(struct mmc_host *, struct mmc_request *);
+ * in drivers/mmc/core/core.c
+ */
+static void mmc_handler(struct mmc_host *host, struct mmc_request* req)
 {
-    static __s32 id = 1;
-    char buf[SBUF_SIZE];
+    static __s16 id = 0;
+    static char buf[LBUF_SIZE];
     struct eevent_t *eevent = (struct eevent_t *)buf;
+    struct mmc_data *data = req->data;
+    __u16 type;
+    unsigned int workload;
     
-    eevent = (struct eevent_t *)buf;
-    eevent->id = id;
-    eevent->type = EEVENT_NET_SEND;
-    eevent->reserved = task_uid(current);
-    eevent->len =
-        sprintf(eevent->params, "%u", len > INT_MAX ? INT_MAX : len);
+    if (!data)
+        jprobe_return();
+
+    if (!mmc_card_sd(host->card))
+        goto out;
     
-    elogk(eevent, ELOG_NET, 0);
+    if (data->flags & MMC_DATA_WRITE)
+        type = EEVENT_MMC_WRITE;
+    else if (data->flags & MMC_DATA_READ)
+        type = EEVENT_MMC_READ;
+    else
+        goto out;
     
-    return 0;
-}
-
-static struct kretprobe send_kretprobe = {
-    .handler = send_ret_handler,
-    .entry_handler = send_entry_handler,
-    .data_size = sizeof(struct elog_probe_data),
-    .kp = {
-        .symbol_name = "sys_sendto",
-    },
-    .maxactive = 10,
-};
-
-
-// sys_recvfrom(int fd, void *buf, size_t size, unsigned flags, struct sockaddr *addr, int *addr_len)
-
-int net_recv_handler(int fd, void *ubuf, size_t len, unsigned flags, struct sockaddr *addr, int *addr_len)
-{
-    char buf[SBUF_SIZE];
-    struct eevent_t *eevent;
-
-    eevent = (struct eevent_t *)buf;
-    eevent->id = 0;
-    eevent->type = EEVENT_NET_RECV;
-    eevent->reserved = task_uid(current);
-    eevent->len =
-        sprintf(eevent->params, "%u", len > INT_MAX ? INT_MAX : len);
+    eevent->id = id++;
+    eevent->type = type;
+    workload = data->blocks * data->blksz;
+    memcpy(eevent->payload, &workload, sizeof(unsigned int));
+    eevent->len = sizeof(unsigned int);
     
-    elogk(eevent, ELOG_NET, 0);
-    
+    elogk(eevent, ELOG_MMC, 0);
+
+    ++counter[type];
+
+  out:
     jprobe_return();
-    return 0;
+    
+    return;
 }
 
-
-static struct kretprobe recv_kretprobe = {
-    .handler = recv_ret_handler,
-    .entry_handler = recv_entry_handler,
-    .data_size = sizeof(struct elog_probe_data),
+static struct jprobe mmc_probe = {
+    .entry = mmc_handler,
     .kp = {
-        .symbol_name = "sys_sendto",
+        .symbol_name = "mmc_wait_for_req",
     },
-    .maxactive = 10,
 };
-*/
+
 static int __init etrace_init(void)
 {
     int ret;
 
     ret = register_kretprobe(&read_kretprobe);
     if (ret < 0)
-        goto err;
+        goto err1;
     ret = register_kretprobe(&write_kretprobe);
     if (ret < 0)
-        goto err;
-/*    ret = register_kretprobe(&send_kretprobe);
+        goto err2;
+    ret = register_jprobe(&mmc_probe);
     if (ret < 0)
-        goto err;
-    ret = register_kretprobe(&recv_kretprobe);
-    if (ret < 0)
-        goto err;
-*/  
+        goto err3;
+    
     ktime_get_ts(&timestat);
     
     return 0;
     
-  err:
+  err3:
+    unregister_kretprobe(&write_kretprobe);
+  err2:
+    unregister_kretprobe(&read_kretprobe);
+  err1:
     printk(KERN_INFO "etrace init failed\n");
     return -1;
 }
@@ -280,16 +269,15 @@ static void __exit etrace_exit(void)
     
     unregister_kretprobe(&read_kretprobe);
     unregister_kretprobe(&write_kretprobe);
-//    unregister_kretprobe(&send_kretprobe);
-//    unregister_kretprobe(&recv_kretprobe);
+    unregister_jprobe(&mmc_probe);
     
     ktime_get_ts(&timestat);
      
-    printk(KERN_INFO "%d read, %d write, %d send, %d recv in %ld seconds!\n",
+    printk("%d vfs read, %d vfs write\n%d mmc read, %d mmc write\nin %ld seconds!\n",
            counter[EEVENT_VFS_READ],
            counter[EEVENT_VFS_WRITE],
-           counter[EEVENT_NET_SEND],
-           counter[EEVENT_NET_RECV],
+           counter[EEVENT_MMC_READ],
+           counter[EEVENT_MMC_WRITE],
            
            timestat.tv_sec - s);
     
