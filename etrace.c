@@ -29,10 +29,10 @@ static struct timespec timestat;
 #define UID_APP(uid)       ((uid) >= 10000)
 
 enum {
-    EEVENT_VFS_READ = 0,
-    EEVENT_VFS_WRITE,
-    EEVENT_MMC_READ,
-    EEVENT_MMC_WRITE,
+    ELOG_VFS_READ = 0,
+    ELOG_VFS_WRITE,
+    ELOG_MMC_READ,
+    ELOG_MMC_WRITE,
 };
 
 #define ERR_FILENAME "(.)"
@@ -60,7 +60,7 @@ static inline int fpath_filter(char *path, size_t length)
 struct vfs_probe_data
 {
     __u32 hook_ret;
-    struct eevent_t eevent;
+    struct elog_t elog;
     __u8 payload[sizeof(ssize_t)];
 } __attribute__((packed));
 
@@ -68,32 +68,32 @@ static int read_entry_handler(struct kretprobe_instance *ri, struct pt_regs *reg
 {
     char buf[LBUF_SIZE];
     struct file *arg0 = regs_arg(regs, 0, struct file *);
-    struct vfs_probe_data *data = (struct vfs_probe_data *)ri->data;
-    struct eevent_t *eevent = &(data->eevent);
+    struct vfs_probe_data *probe_data = (struct vfs_probe_data *)ri->data;
+    struct elog_t *entry = &(probe_data->elog);
     char *fpath = d_path(&arg0->f_path, buf, LBUF_SIZE);
     unsigned int uid = task_uid(current);
     
     if (!UID_APP(uid) || IS_ERR(fpath) || fpath_filter(fpath, strlen(fpath))) {
-        data->hook_ret = 0;
+        probe_data->hook_ret = 0;
         return 0;
     } else {
-        data->hook_ret = 1;
+        probe_data->hook_ret = 1;
     }
     
-    eevent->type = EEVENT_VFS_READ;
-    eevent->belong = uid;
-    ktime_get_ts(&eevent->etime);
+    entry->type = ELOG_VFS_READ;
+    entry->belong = uid;
+    ktime_get_ts(&entry->etime);
     
     return 0;
 }
 
 static int read_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-    struct vfs_probe_data *data = (struct vfs_probe_data *)ri->data;
-    struct eevent_t *eevent = &(data->eevent);
+    struct vfs_probe_data *probe_data = (struct vfs_probe_data *)ri->data;
+    struct elog_t *entry = &(probe_data->elog);
     ssize_t retvalue;
     
-    if (data->hook_ret == 0)
+    if (probe_data->hook_ret == 0)
         return 0;
     
     retvalue = (ssize_t)regs_return_value(regs);
@@ -101,12 +101,12 @@ static int read_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
     if (retvalue < 512)
         return 0;
     
-    memcpy(eevent->payload, &retvalue, sizeof(ssize_t));
-    eevent->len = sizeof(ssize_t);
+    memcpy(entry->payload, &retvalue, sizeof(ssize_t));
+    entry->len = sizeof(ssize_t);
     
-    counter[EEVENT_VFS_READ]++;
+    counter[ELOG_VFS_READ]++;
 
-    elogk(eevent, ELOG_VFS, ELOGK_WITHOUT_TIME);
+    elogk(entry, ELOG_VFS, ELOGK_WITHOUT_TIME);
     
     return 0;
 }
@@ -126,7 +126,7 @@ static int write_entry_handler(struct kretprobe_instance *ri, struct pt_regs *re
     char buf[LBUF_SIZE];
     struct file *arg0 = regs_arg(regs, 0, struct file *);
     struct vfs_probe_data *data = (struct vfs_probe_data *)ri->data;
-    struct eevent_t *eevent = &(data->eevent);
+    struct elog_t *entry = &(data->elog);
     char *fpath = d_path(&arg0->f_path, buf, LBUF_SIZE);
     unsigned int uid = task_uid(current);
     
@@ -137,20 +137,20 @@ static int write_entry_handler(struct kretprobe_instance *ri, struct pt_regs *re
         data->hook_ret = 1;
     }
     
-    eevent->type = EEVENT_VFS_WRITE;
-    eevent->belong = task_uid(current);
-    ktime_get_ts(&eevent->etime);
+    entry->type = ELOG_VFS_WRITE;
+    entry->belong = task_uid(current);
+    ktime_get_ts(&entry->etime);
     
     return 0;
 }
 
 static int write_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-    struct vfs_probe_data *data = (struct vfs_probe_data *)ri->data;
-    struct eevent_t *eevent = &(data->eevent);
+    struct vfs_probe_data *probe_data = (struct vfs_probe_data *)ri->data;
+    struct elog_t *entry = &(probe_data->elog);
     ssize_t retvalue;
     
-    if (data->hook_ret == 0)
+    if (probe_data->hook_ret == 0)
         return 0;
     
     retvalue = (ssize_t)regs_return_value(regs);
@@ -158,12 +158,12 @@ static int write_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs
     if (retvalue < 512)
         return 0;
     
-    memcpy(eevent->payload, &retvalue, sizeof(ssize_t));
-    eevent->len = sizeof(ssize_t);
+    memcpy(entry->payload, &retvalue, sizeof(ssize_t));
+    entry->len = sizeof(ssize_t);
 
-    counter[EEVENT_VFS_WRITE]++;
+    counter[ELOG_VFS_WRITE]++;
     
-    elogk(eevent, ELOG_VFS, ELOGK_WITHOUT_TIME);
+    elogk(entry, ELOG_VFS, ELOGK_WITHOUT_TIME);
     
     return 0;
 }
@@ -181,7 +181,7 @@ static struct kretprobe write_kretprobe = {
 struct mmc_probe_data
 {
     __u32 hook_ret;
-    struct eevent_t eevent;
+    struct elog_t elog;
     __u8 payload[2*sizeof(unsigned int)];
 } __attribute__((packed));
 
@@ -194,7 +194,7 @@ static int mmc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs
     struct mmc_host *host = regs_arg(regs, 0, struct mmc_host *);
     struct mmc_request *req = regs_arg(regs, 1, struct mmc_request *);
     struct mmc_probe_data *probe_data = (struct mmc_probe_data *)ri->data;
-    struct eevent_t *eevent = &(probe_data->eevent);
+    struct elog_t *entry = &(probe_data->elog);
     struct mmc_data *data = req->data;
     __u16 type;
     unsigned int workload;
@@ -206,19 +206,19 @@ static int mmc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs
         goto discard;
     
     if (data->flags & MMC_DATA_WRITE)
-        type = EEVENT_MMC_WRITE;
+        type = ELOG_MMC_WRITE;
     else if (data->flags & MMC_DATA_READ)
-        type = EEVENT_MMC_READ;
+        type = ELOG_MMC_READ;
     else
         goto discard;
 
     probe_data->hook_ret = 1;
     
-    eevent->type = type;
+    entry->type = type;
     workload = data->blocks * data->blksz;
-    memcpy(eevent->payload, &workload, sizeof(unsigned int));
-    eevent->len = sizeof(unsigned int);
-    ktime_get_ts(&eevent->etime);
+    memcpy(entry->payload, &workload, sizeof(unsigned int));
+    entry->len = sizeof(unsigned int);
+    ktime_get_ts(&entry->etime);
 
     ++counter[type];
 
@@ -231,7 +231,7 @@ static int mmc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs
 static int mmc_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
     struct mmc_probe_data *probe_data = (struct mmc_probe_data *)ri->data;
-    struct eevent_t *eevent = &(probe_data->eevent);
+    struct elog_t *entry = &(probe_data->elog);
     unsigned int duration;
     struct timespec rtime;
     
@@ -239,13 +239,13 @@ static int mmc_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
         return 0;
 
     ktime_get_ts(&rtime);
-    duration = (rtime.tv_sec - eevent->etime.tv_sec) * 1000;
-    duration += (rtime.tv_sec - eevent->etime.tv_sec) / 1000000;
+    duration = (rtime.tv_sec - entry->etime.tv_sec) * 1000;
+    duration += (rtime.tv_sec - entry->etime.tv_sec) / 1000000;
     
-    memcpy(eevent->payload + eevent->len, &duration, sizeof(unsigned int));
-    eevent->len += sizeof(unsigned int);
+    memcpy(entry->payload + entry->len, &duration, sizeof(unsigned int));
+    entry->len += sizeof(unsigned int);
 
-    elogk(eevent, ELOG_MMC, ELOGK_WITHOUT_TIME);
+    elogk(entry, ELOG_MMC, ELOGK_WITHOUT_TIME);
     
     return 0;
 }
@@ -298,10 +298,10 @@ static void __exit etrace_exit(void)
     ktime_get_ts(&timestat);
      
     printk("%d vfs read, %d vfs write\n%d mmc read, %d mmc write\nin %ld seconds!\n",
-           counter[EEVENT_VFS_READ],
-           counter[EEVENT_VFS_WRITE],
-           counter[EEVENT_MMC_READ],
-           counter[EEVENT_MMC_WRITE],
+           counter[ELOG_VFS_READ],
+           counter[ELOG_VFS_WRITE],
+           counter[ELOG_MMC_READ],
+           counter[ELOG_MMC_WRITE],
            
            timestat.tv_sec - s);
     
