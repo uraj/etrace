@@ -25,7 +25,6 @@ static struct timespec timestat;
 #define regs_arg(regs,no,type)     ((type)((regs)->ARM_r ## no))
 
 #define LBUF_SIZE          128
-#define SBUF_SIZE          4 
 
 #define UID_APP(uid)       ((uid) >= 10000)
 
