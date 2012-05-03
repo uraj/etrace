@@ -66,7 +66,6 @@ struct vfs_probe_data
 
 static int read_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-    static __s32 id = 1;
     char buf[LBUF_SIZE];
     struct file *arg0 = regs_arg(regs, 0, struct file *);
     struct vfs_probe_data *data = (struct vfs_probe_data *)ri->data;
@@ -81,7 +80,6 @@ static int read_entry_handler(struct kretprobe_instance *ri, struct pt_regs *reg
         data->hook_ret = 1;
     }
     
-    eevent->id = id++;
     eevent->type = EEVENT_VFS_READ;
     eevent->belong = uid;
     ktime_get_ts(&eevent->etime);
@@ -125,7 +123,6 @@ static struct kretprobe read_kretprobe = {
 
 static int write_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-    static __s32 id = 1;
     char buf[LBUF_SIZE];
     struct file *arg0 = regs_arg(regs, 0, struct file *);
     struct vfs_probe_data *data = (struct vfs_probe_data *)ri->data;
@@ -139,8 +136,7 @@ static int write_entry_handler(struct kretprobe_instance *ri, struct pt_regs *re
     } else {
         data->hook_ret = 1;
     }
-
-    eevent->id = id++;
+    
     eevent->type = EEVENT_VFS_WRITE;
     eevent->belong = task_uid(current);
     ktime_get_ts(&eevent->etime);
@@ -195,7 +191,6 @@ struct mmc_probe_data
  */
 static int mmc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-    static __s32 id = 1;
     struct mmc_host *host = regs_arg(regs, 0, struct mmc_host *);
     struct mmc_request *req = regs_arg(regs, 1, struct mmc_request *);
     struct mmc_probe_data *probe_data = (struct mmc_probe_data *)ri->data;
@@ -219,7 +214,6 @@ static int mmc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs
 
     probe_data->hook_ret = 1;
     
-    eevent->id = id++;
     eevent->type = type;
     workload = data->blocks * data->blksz;
     memcpy(eevent->payload, &workload, sizeof(unsigned int));
