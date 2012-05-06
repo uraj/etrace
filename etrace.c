@@ -225,6 +225,7 @@ static int mmc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs
     return 0;
     
   discard:
+    probe_data->hook_ret = 0;
     return 0;
 }
 
@@ -240,7 +241,7 @@ static int mmc_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 
     ktime_get_ts(&rtime);
     duration = (rtime.tv_sec - entry->etime.tv_sec) * 1000;
-    duration += (rtime.tv_sec - entry->etime.tv_sec) / 1000000;
+    duration += (rtime.tv_nsec - entry->etime.tv_nsec) / 1000000;
     
     memcpy(entry->payload + entry->len, &duration, sizeof(unsigned int));
     entry->len += sizeof(unsigned int);
@@ -270,6 +271,7 @@ static int __init etrace_init(void)
     ret = register_kretprobe(&write_kretprobe);
     if (ret < 0)
         goto err2;
+    
     ret = register_kretprobe(&mmc_kretprobe);
     if (ret < 0)
         goto err3;
