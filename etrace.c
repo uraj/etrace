@@ -116,7 +116,7 @@ static struct kretprobe read_kretprobe = {
     .entry_handler = read_entry_handler,
     .data_size = sizeof(struct vfs_probe_data),
     .kp = {
-        .symbol_name = "__ee_read_core",
+        .symbol_name = "vfs_read",
     },
     .maxactive = 10,
 };
@@ -173,7 +173,7 @@ static struct kretprobe write_kretprobe = {
     .entry_handler = write_entry_handler,
     .data_size = sizeof(struct vfs_probe_data),
     .kp = {
-        .symbol_name = "__ee_write_core",
+        .symbol_name = "vfs_write",
     },
     .maxactive = 10,
 };
